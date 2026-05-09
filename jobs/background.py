@@ -8,31 +8,44 @@ from utils import get_bj_now
 from data import storage
 
 def backup_to_github():
+    """仅备份核心 SQLite 数据库文件至 GitHub"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return False, "⚠️ 未配置 GITHUB，跳过备份。"
 
     filename = 'oracle_manager.db'
-    if not os.path.exists(filename): return False, "数据库文件不存在"
+    if not os.path.exists(filename): 
+        return False, "数据库文件不存在"
 
     try:
-        with open(filename, 'rb') as f: content = f.read()
+        with open(filename, 'rb') as f: 
+            content = f.read()
+            
         encoded = base64.b64encode(content).decode('utf-8')
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
         headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
         sha = None
         get_resp = requests.get(url, headers=headers)
-        if get_resp.status_code == 200: sha = get_resp.json().get('sha')
+        if get_resp.status_code == 200: 
+            sha = get_resp.json().get('sha')
 
-        data = {"message": f"Auto backup DB at {get_bj_now().strftime('%Y-%m-%d %H:%M:%S')}", "content": encoded}
-        if sha: data["sha"] = sha
+        data = {
+            "message": f"Auto backup DB at {get_bj_now().strftime('%Y-%m-%d %H:%M:%S')}", 
+            "content": encoded
+        }
+        if sha: 
+            data["sha"] = sha
 
         put_resp = requests.put(url, headers=headers, json=data)
-        if put_resp.status_code in [200, 201, 422]: return True, f"✅ 成功备份核心数据库到 GitHub"
-        else: return False, f"备份失败: HTTP {put_resp.status_code}"
-    except Exception as e: return False, f"备份异常: {str(e)}"
+        if put_resp.status_code in [200, 201, 422]: 
+            return True, f"✅ 成功备份核心数据库到 GitHub"
+        else: 
+            return False, f"备份失败: HTTP {put_resp.status_code}"
+    except Exception as e: 
+        return False, f"备份异常: {str(e)}"
 
 def background_jobs_loop(oci_svc, bot):
+    """后台常驻定时任务循环"""
     def send_tg(text):
         try: bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
         except: pass
@@ -49,6 +62,7 @@ def background_jobs_loop(oci_svc, bot):
             now_utc = datetime.now(timezone.utc)
             today_utc_str = now_utc.strftime("%Y-%m-%d")
             
+            # --- 任务 1：每日中午 12 点发送节点到期提醒 ---
             if last_report_day != today_bj_str and now_bj.hour >= 12:
                 perms = storage.get_permissions()
                 for uid, data in perms.items():
@@ -57,15 +71,18 @@ def background_jobs_loop(oci_svc, bot):
                         try:
                             s_name = oci_svc.all_instances.get(ocid, {}).get("name", "未知节点")
                             days_left = (datetime.strptime(exp_str, "%Y-%m-%d").date() - now_bj.date()).days
+                            
                             if days_left in [6, 4, 2, 0]:
                                 msg = f"⏳ **服务提醒**\n您的节点 `{s_name}` 剩余 `{days_left}` 天。"
-                                if days_left == 0: msg = f"⚠️ **今日到期**\n节点 `{s_name}` 将于今晚到期！"
+                                if days_left == 0: 
+                                    msg = f"⚠️ **今日到期**\n节点 `{s_name}` 将于今晚到期！"
                                 try: bot.send_message(uid, msg, parse_mode="Markdown")
                                 except: pass
                                 send_tg(f"🔔 客户 `{uid}` 机器 `{s_name}` 剩余 {days_left} 天。")
                         except: pass
                 last_report_day = today_bj_str
                 
+            # --- 任务 2：智能流量熔断检测 ---
             if last_traffic_check_utc != today_utc_str or high_frequency_mode:
                 accounts = load_oci_accounts()
                 limits_data = storage.get_traffic_limits()
@@ -79,21 +96,28 @@ def background_jobs_loop(oci_svc, bot):
                     if usage_gb >= 0:
                         cache[acc_name] = {"usage_gb": usage_gb, "update_time": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")}
                         if limit > 0:
-                            if (usage_gb / limit) >= 0.9: any_at_risk = True
+                            if (usage_gb / limit) >= 0.9: 
+                                any_at_risk = True
+                            
+                            # 触发熔断
                             if usage_gb >= limit:
                                 count, names = oci_svc.suspend_account_instances(acc_name, acc_conf)
                                 if count > 0:
-                                    oci_svc.fetch_all_instances(accounts)
+                                    oci_svc.fetch_all_instances(accounts) # 刷新缓存状态
                                     send_tg(f"🛑 **自动熔断**\n账号: `{acc_name}`\n超额停机 {count} 台: `{', '.join(names)}`")
                 
                 high_frequency_mode = any_at_risk
                 last_traffic_check_utc = today_utc_str
                 storage.save_traffic_cache(cache)
             
+            # --- 任务 3：每日 UTC 00:00 执行数据库云端备份 ---
             if last_traffic_report_utc != today_utc_str:
                 success, msg = backup_to_github()
-                if not success: send_tg(f"🔴 **自动备份失败**\n{msg}")
+                if not success: 
+                    send_tg(f"🔴 **自动备份失败**\n{msg}")
                 last_traffic_report_utc = today_utc_str
 
-        except Exception as e: print(f"后台任务错误: {e}")
+        except Exception as e: 
+            print(f"后台任务错误: {e}")
+            
         time.sleep(3600)
