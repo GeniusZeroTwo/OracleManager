@@ -57,20 +57,18 @@ def register_api_routes(app, oci_svc, bot):
 
         perms = storage.get_permissions()
         used = perms.get(tg_id, {}).get('used_changes', 0)
-        perms[tg_id] = {
-            "ocids": data.get('ocids', {}),
-            "max_changes": int(data.get('max_changes', 0)),
-            "used_changes": used
-        }
-        storage.save_permissions(perms)
+        
+        storage.update_user(
+            tg_id=tg_id, 
+            max_changes=int(data.get('max_changes', 0)), 
+            used_changes=used, 
+            ocids_dict=data.get('ocids', {})
+        )
         return jsonify({"success": True})
         
     @app.route('/api/admin/delete', methods=['POST'])
     def admin_delete():
         if not check_auth(request): return jsonify({"success": False})
         tg_id = str(request.json.get('tg_id', '')).strip()
-        perms = storage.get_permissions()
-        if tg_id in perms:
-            del perms[tg_id]
-            storage.save_permissions(perms)
+        storage.delete_user(tg_id)
         return jsonify({"success": True})
