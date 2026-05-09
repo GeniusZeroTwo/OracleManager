@@ -23,7 +23,6 @@ GITHUB_REPO = str(_init_config.get('github_repo', ''))
 BJ_TZ = timezone(timedelta(hours=8))
 
 def load_oci_accounts():
-    """提取 OCI 账号配置"""
     config = load_full_yaml()
     accounts = {}
     for k, v in config.items():
