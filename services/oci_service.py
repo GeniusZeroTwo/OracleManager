@@ -9,7 +9,6 @@ class OCIService:
     def __init__(self):
         self.all_instances = {}
         self.instance_config_map = {}
-        # 内存级缓存，减少读盘
         self._mem_ip_cache = storage.get_ip_cache()
 
     def fetch_single_account_instances(self, acc_name, config):
@@ -35,7 +34,6 @@ class OCIService:
         new_config_map = {}
         error_msgs = []
 
-        # 使用多线程并发拉取多账号节点，大幅提升速度
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(self.fetch_single_account_instances, name, conf): name for name, conf in accounts.items()}
             for future in concurrent.futures.as_completed(futures):
