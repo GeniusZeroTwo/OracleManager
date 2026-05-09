@@ -8,6 +8,7 @@ from services.oci_service import OCIService
 from bot.tg_handlers import register_bot_handlers
 from web.api_routes import register_api_routes
 from jobs.background import background_jobs_loop
+from data import storage
 
 # 1. 初始化核心组件
 app = Flask(__name__)
@@ -21,6 +22,9 @@ register_api_routes(app, oci_svc, bot)
 
 # 3. 启动包装器
 def start_services():
+    print("🗄️ 正在初始化 SQLite 数据库环境...")
+    storage.init_db()
+
     print("🚀 正在预热 OCI 数据 (多线程拉取中)...")
     oci_svc.fetch_all_instances(load_oci_accounts())
     
