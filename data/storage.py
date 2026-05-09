@@ -1,9 +1,7 @@
-# data/storage.py
-import json
 import os
+import json
 import threading
 
-# 全局读写锁
 _file_lock = threading.Lock()
 
 STATS_FILE = 'stats.json'
@@ -13,31 +11,58 @@ TRAFFIC_CACHE_FILE = 'traffic_cache.json'
 TRAFFIC_LIMITS_FILE = 'traffic_limits.json'
 
 def load_json(filename):
-    """带锁的安全读取"""
     with _file_lock:
         if not os.path.exists(filename): return {}
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
-            return {}
+        except: return {}
 
 def save_json(filename, data):
-    """带锁的安全写入，使用临时文件防止断电损坏"""
     with _file_lock:
-        temp_file = filename + ".tmp"
         try:
-            with open(temp_file, 'w', encoding='utf-8') as f:
+            temp_file = filename + ".tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f: 
                 json.dump(data, f, indent=4)
-            os.replace(temp_file, filename) # 原子替换
-        except Exception as e:
-            print(f"写入 {filename} 失败: {e}")
+            os.replace(temp_file, filename)
+        except Exception as e: 
+            print(f"保存 {filename} 失败: {e}")
 
-# 封装具体的业务读取方法
+# --- 具体的业务读取快捷方法 ---
 def get_permissions():
-    return load_json(PERMS_FILE)
+    perms = load_json(PERMS_FILE)
+    # 兼容老数据结构
+    migrated = False
+    for uid, data in perms.items():
+        if 'ocids' in data and isinstance(data['ocids'], list):
+            old_expire = data.get('expire_time', '')
+            data['ocids'] = {ocid: old_expire for ocid in data['ocids']}
+            if 'expire_time' in data: del data['expire_time']
+            migrated = True
+    if migrated: save_json(PERMS_FILE, perms)
+    return perms
 
-def update_permissions(user_id, data):
-    perms = get_permissions()
-    perms[user_id] = data
-    save_json(PERMS_FILE, perms)
+def save_permissions(data):
+    save_json(PERMS_FILE, data)
+
+def get_ip_cache(): return load_json(IP_CACHE_FILE)
+def save_ip_cache(data): save_json(IP_CACHE_FILE, data)
+
+def get_traffic_limits(): return load_json(TRAFFIC_LIMITS_FILE)
+def save_traffic_limits(data): save_json(TRAFFIC_LIMITS_FILE, data)
+
+def get_traffic_cache(): return load_json(TRAFFIC_CACHE_FILE)
+def save_traffic_cache(data): save_json(TRAFFIC_CACHE_FILE, data)
+
+def log_change(user_id, server_name, old_ip, new_ip, now_time_str):
+    stats = load_json(STATS_FILE)
+    if "total_changes" not in stats: stats["total_changes"] = 0
+    if "history" not in stats: stats["history"] = []
+    
+    stats["total_changes"] += 1
+    stats["history"].append({
+        "time": now_time_str,
+        "user_id": user_id, "server": server_name, "old_ip": old_ip, "new_ip": new_ip
+    })
+    save_json(STATS_FILE, stats)
+    return stats["total_changes"]
