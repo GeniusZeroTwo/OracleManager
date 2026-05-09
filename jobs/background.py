@@ -11,32 +11,26 @@ def backup_to_github():
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return False, "⚠️ 未配置 GITHUB，跳过备份。"
 
-    files = [storage.PERMS_FILE, storage.STATS_FILE, storage.TRAFFIC_LIMITS_FILE]
-    success_count = 0
-    errors = []
+    filename = 'oracle_manager.db'
+    if not os.path.exists(filename): return False, "数据库文件不存在"
 
-    for filename in files:
-        if not os.path.exists(filename): continue
-        try:
-            with open(filename, 'rb') as f: content = f.read()
-            encoded = base64.b64encode(content).decode('utf-8')
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
-            headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    try:
+        with open(filename, 'rb') as f: content = f.read()
+        encoded = base64.b64encode(content).decode('utf-8')
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
-            sha = None
-            get_resp = requests.get(url, headers=headers)
-            if get_resp.status_code == 200: sha = get_resp.json().get('sha')
+        sha = None
+        get_resp = requests.get(url, headers=headers)
+        if get_resp.status_code == 200: sha = get_resp.json().get('sha')
 
-            data = {"message": f"Auto backup {filename} by Bot", "content": encoded}
-            if sha: data["sha"] = sha
+        data = {"message": f"Auto backup DB at {get_bj_now().strftime('%Y-%m-%d %H:%M:%S')}", "content": encoded}
+        if sha: data["sha"] = sha
 
-            put_resp = requests.put(url, headers=headers, json=data)
-            if put_resp.status_code in [200, 201, 422]: success_count += 1
-            else: errors.append(f"{filename}: {put_resp.status_code}")
-        except Exception as e: errors.append(f"{filename}: {str(e)}")
-
-    if errors: return False, "\n".join(errors)
-    return True, f"✅ 成功备份 {success_count} 个文件"
+        put_resp = requests.put(url, headers=headers, json=data)
+        if put_resp.status_code in [200, 201, 422]: return True, f"✅ 成功备份核心数据库到 GitHub"
+        else: return False, f"备份失败: HTTP {put_resp.status_code}"
+    except Exception as e: return False, f"备份异常: {str(e)}"
 
 def background_jobs_loop(oci_svc, bot):
     def send_tg(text):
@@ -55,7 +49,6 @@ def background_jobs_loop(oci_svc, bot):
             now_utc = datetime.now(timezone.utc)
             today_utc_str = now_utc.strftime("%Y-%m-%d")
             
-            # --- 任务 1：到期提醒 ---
             if last_report_day != today_bj_str and now_bj.hour >= 12:
                 perms = storage.get_permissions()
                 for uid, data in perms.items():
@@ -73,7 +66,6 @@ def background_jobs_loop(oci_svc, bot):
                         except: pass
                 last_report_day = today_bj_str
                 
-            # --- 任务 2：流量熔断检测 ---
             if last_traffic_check_utc != today_utc_str or high_frequency_mode:
                 accounts = load_oci_accounts()
                 limits_data = storage.get_traffic_limits()
@@ -98,7 +90,6 @@ def background_jobs_loop(oci_svc, bot):
                 last_traffic_check_utc = today_utc_str
                 storage.save_traffic_cache(cache)
             
-            # --- 任务 3：每日战报与备份 ---
             if last_traffic_report_utc != today_utc_str:
                 success, msg = backup_to_github()
                 if not success: send_tg(f"🔴 **自动备份失败**\n{msg}")
